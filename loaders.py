@@ -4,8 +4,8 @@ import json
 
 import numpy as np
 
-from preprocess import text_processor
-from dataset import Dict, PairedDataset
+from misc.dataset import Dict, PairedDataset
+
 from w2v import Embedder
 
 
@@ -20,7 +20,7 @@ def segmenter(tweet, level='char'):
         return tweet.split()
     else:
         raise ValueError
-    
+
 
 # Data loaders
 def load_twisty(path='/home/corpora/TwiSty/twisty-EN',

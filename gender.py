@@ -6,13 +6,14 @@ from sklearn import metrics
 import torch
 import torch.nn as nn
 
-from preprocess import text_processor
-from optimizer import Optimizer
-from trainer import Trainer
-from loggers import StdLogger, VisdomLogger
-from rcnn import RCNN
-from dataset import PairedDataset
+from misc.preprocess import text_processor
+from misc.optimizer import Optimizer
+from misc.trainer import Trainer
+from misc.loggers import StdLogger, VisdomLogger
+from misc.dataset import PairedDataset
+
 from loaders import load_twisty, load_dataset, load_embeddings
+from rcnn import RCNN
 
 
 def compute_scores(model, dataset):
@@ -104,7 +105,7 @@ if __name__ == '__main__':
     criterion = make_criterion(train)
     if args.gpu:
         model.cuda(), criterion.cuda()
-    
+
     optimizer = Optimizer(model.parameters(), args.optim,
                           lr=args.learning_rate, max_norm=args.max_norm)
 
