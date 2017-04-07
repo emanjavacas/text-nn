@@ -1,11 +1,33 @@
 
 import os
 import json
-from dataset import Dict, PairedDataset
 
+import numpy as np
+
+from preprocess import text_processor
+from dataset import Dict, PairedDataset
+from w2v import Embedder
+
+
+def identity(x):
+    return x
+
+
+def segmenter(tweet, level='char'):
+    if level == 'char':
+        return list(tweet)
+    elif level == 'token':
+        return tweet.split()
+    else:
+        raise ValueError
+    
 
 # Data loaders
-def load_twisty(path='/home/corpora/TwiSty/twisty-EN'):
+def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
+                min_len=0,
+                level='token',
+                concat=False,
+                processor=identity):
     """
     Load twisty dataset with gender labels per tweet
     """
@@ -14,13 +36,23 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN'):
     with open(os.path.join(path, 'TwiSty-EN.json'), 'r') as fp:
         metadata = json.load(fp)
     src, trg = [], []
-    for user_id, user_metadata in list(metadata.items()):
+    for user_id, user_metadata in metadata.items():
         if user_id + ".json" in tweet_fs:
             with open(os.path.join(tweets_path, user_id + '.json'), 'r') as fp:
-                user_data = json.load(fp)
-            for tweet in user_metadata['confirmed_tweet_ids']:
-                src.append(user_data['tweets'][str(tweet)]['text'].split())
-                trg.append([user_metadata["gender"]])
+                tweets = json.load(fp)['tweets']
+            buf = []
+            for tweet_id in user_metadata['confirmed_tweet_ids']:
+                tweet = processor(tweets[str(tweet_id)]['text'])
+                tweet = segmenter(tweet, level=level)
+                buf.extend(tweet)
+                if len(buf) > min_len:
+                    src.append(buf), trg.append([user_metadata["gender"]])
+                    buf = []
+                    continue
+                if not concat:
+                    buf = []
+                    continue
+
     return src, trg
 
 
@@ -46,3 +78,15 @@ def load_dataset(src, trg, batch_size, max_size=20000, min_freq=5,
     splits = PairedDataset(src, trg, d, batch_size, gpu=gpu).splits(
         shuffle=shuffle, sort_key=sort_key, **kwargs)
     return splits
+
+
+def load_embeddings(vocab, flavor, suffix, directory):
+    """
+    Load embeddings from a w2v model for model pretraining
+    """
+    embedder = Embedder(flavor=flavor, suffix=suffix, directory=directory)
+    embedder.load()
+    weight = np.zeros((len(vocab), embedder.size))
+    for idx, w in enumerate(vocab):
+        weight[idx] = embedder[w]
+    return weight

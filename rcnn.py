@@ -1,4 +1,6 @@
 
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,12 +25,13 @@ class RCNN(nn.Module):
     - n_classes: int, number of classes in the classification
     """
     def __init__(self, vocab, emb_dim, hid_dim, max_dim, n_classes,
-                 act='tanh', padding_idx=None):
+                 dropout=0.0, act='tanh', padding_idx=None):
         self.vocab = vocab
         self.emb_dim = emb_dim
         self.hid_dim = hid_dim
         self.cat_dim = (2 * hid_dim) + emb_dim  # c_l + emb + c_r
         self.max_dim = max_dim  # projection before max-pooling
+        self.dropout = dropout
         self.act = getattr(F, act)
         super(RCNN, self).__init__()
         self.embeddings = nn.Embedding(
@@ -38,9 +41,19 @@ class RCNN(nn.Module):
         self.W_l = nn.Linear(self.hid_dim, self.hid_dim)
         self.W_r = nn.Linear(self.hid_dim, self.hid_dim)
         self.W_sl = nn.Linear(self.emb_dim, self.hid_dim)
-        self.W_sr = nn.Linear(self.hid_dim, self.emb_dim)
+        self.W_sr = nn.Linear(self.emb_dim, self.hid_dim)
         self.max_proj = nn.Linear(self.cat_dim, self.max_dim)
         self.doc_proj = nn.Linear(self.max_dim, n_classes)
+
+    def init_embeddings(self, weight):
+        if isinstance(weight, np.ndarray):
+            self.embeddings.weight.data = torch.Tensor(weight)
+        elif isinstance(weight, torch.Tensor):
+            self.embeddings.weight.data = weight
+        elif isinstance(weight, nn.Parameter):
+            self.embeddings.weight = weight
+        else:
+            raise ValueError("Unknown weight type [%s]" % type(weight))
 
     def forward(self, inp):
         seq_len, batch = inp.size()
@@ -60,10 +73,13 @@ class RCNN(nn.Module):
             c_r = self.act(self.W_r(c_r) + emb_rs[r_i])
             c_ls.append(c_l), c_rs.append(c_r)
         c_ls, c_rs = torch.stack(c_ls), torch.stack(c_rs[::-1])
+        c_ls = F.dropout(c_ls, p=self.dropout, training=self.training)
+        c_rs = F.dropout(c_rs, p=self.dropout, training=self.training)
 
         # - project concatenated contexts
         cat = torch.cat([c_ls, emb, c_rs], 2) \
                    .view(seq_len * batch, self.cat_dim)
+        cat = F.dropout(cat, p=self.dropout, training=self.training)
         y = self.act(self.max_proj(cat)) \
                 .view(seq_len, batch, self.max_dim)
 

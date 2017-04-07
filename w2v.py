@@ -6,8 +6,6 @@ import numpy as np
 from gensim.models import Word2Vec
 import fasttext
 
-from loaders import load_twisty
-
 
 class Embedder(object):
     def __init__(self, flavor='w2v', suffix='', directory='data'):
@@ -18,6 +16,14 @@ class Embedder(object):
         self.fitted = False
         self.path = os.path.join(directory, '{flavor}_model{suffix}'.format(
             flavor=flavor, suffix=('.' + suffix) if suffix else ''))
+
+    def __getitem__(self, w):
+        if not self.fitted:
+            raise ValueError("Model hasn't been trained yet")
+        try:
+            return self.model[w]
+        except KeyError:
+            return self.default.copy()
 
     def load(self):
         if self.flavor == 'w2v':
@@ -52,6 +58,7 @@ class Embedder(object):
                 min_count=min_count, dim=size, ws=window)
 
         self.size = size
+        self.default = np.zeros(self.size, dtype='float64')
         self.fitted = True
 
         return self
@@ -59,15 +66,9 @@ class Embedder(object):
     def transform(self, documents):
         default = np.zeros(self.size, dtype='float64')
         X = []
-        for d in documents:
-            x = []
-            for w in d:
-                try:
-                    v = self.model[w]
-                except KeyError:
-                    v = default.copy()
-                x.append(v)
 
+        for d in documents:
+            x = [sefl[w] for w in d]
             X.append(np.mean(x, axis=0))
 
         return np.array(X, dtype='float64')
@@ -88,6 +89,7 @@ if __name__ == '__main__':
     args = vars(parser.parse_args())
 
     print("Loading data...")
+    from loaders import load_twisty
     tweets, _ = load_twisty()
 
     print("Creating model...")
