@@ -46,7 +46,7 @@ class ConvRec(nn.Module):
         self.in_channels = 1    # text has only a channel
         self.out_channels = out_channels
         self.kernel_sizes = kernel_sizes
-        
+
         self.hid_dim = hid_dim
         self.cell = cell
         self.num_layers = num_layers
@@ -55,21 +55,21 @@ class ConvRec(nn.Module):
         self.dropout = dropout
         self.act = act
 
-        super(ConvRNN, self).__init__()
+        super(ConvRec, self).__init__()
 
         # Embeddings
         self.embeddings = nn.Embedding(
             self.vocab, self.emb_dim, padding_idx=padding_idx)
 
         # CNN
-        self.convs = []
-        for kernel_size in self.kernel_sizes:
-            self.convs.append(nn.Sequential(
+        self.convs = [
+            nn.Sequential(
                 nn.Conv2d(self.in_channels, self.out_channels,
                           # number of filters HxW for each kernel (H is
                           # fixed to emb_dim to ensure H_out equals one)
                           (self.emb_dim, kernel_size)),
-                getattr(nn, self.act)))
+                getattr(nn, self.act))
+            for kernel_size in self.kernel_sizes]
 
         # RNN
         self.rnn = getattr(nn, self.cell)(
@@ -84,27 +84,24 @@ class ConvRec(nn.Module):
     def forward(self, inp):
         # Embedding
         emb = self.embeddings(inp).t()  # (batch x seq_len x emb_dim)
-        emb = emb.transpose(1, 2).unsqueeze(1)  # (batch x 1 x emb_dim x seq_len)
+        emb = emb.transpose(1, 2).unsqueeze(1)  # (bs x 1 x emb_dim x seq_len)
 
         # CNN
+        conv_out = []
         for conv in self.convs:
             # (batch x out_channels x 1 x W_out)
+            # W_out = seq_len - kernel_size + 1
             out = conv(emb)
-            # (batch x out_channels x )
-            out = F.max_pool1d(out, (1, out.size(3)))
+            # (batch x out_channels x 1)
+            out = F.max_pool1d(out.squeeze(2), out.size(2))
             out = F.dropout(out, p=self.dropout, training=self.training)
-            emb = out.view()
-        conv_out = [getattr(F, self.act)(conv(emb)) for conv in self.convs]
-        # [(batch x out_channels x W_out), ...]
-        conv_out = [out_i.squeeze(2) for out_i in conv_out]
-        # [(batch x out_channels x 1), ...]
-        pool_out = [F.max_pool1d(out_i, out_i.size(2)) for out_i in conv_out]
-        # [(batch x out_channels), ...]
-        pool_out = [out_i.squeeze(2) for out_i in pool_out]
-        pool_out = torch.stack(pool_out)  # (num_kernels x batch x out_channels)
-        pool_out = F.dropout(out, dropout=self.dropout, training=self.training)
+            # (batch x out_channels)
+            conv_out.append(out.squeeze(2))
+        conv_out = torch.stack(conv_out)  # (num_kernels x bs x out_channels)
+        conv_out = F.dropout(
+            conv_out, dropout=self.dropout, training=self.training)
 
         # RNN
-        rnn_out, _ = self.rnn(pool_out)
-        rnn_out = rnn_out[-1]   # take only last layer & last state output
-        return F.log_softmax(self.proj(h_n)
+        rnn_out, _ = self.rnn(conv_out)
+        # take only last layer & last state output
+        return F.log_softmax(self.proj(rnn_out[-1]))
