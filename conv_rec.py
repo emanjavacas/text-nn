@@ -39,10 +39,11 @@ class ConvRec(nn.Module):
                  # rnn parameters
                  hid_dim, cell='LSTM', num_layers=1, bidi=True,
                  # rest parameters
-                 dropout=0.0, act='relu', padding_idx=None):
+                 dropout=0.0, act='ReLU', padding_idx=None):
         self.vocab = vocab
         self.emb_dim = emb_dim
-        
+
+        self.in_channels = 1    # text has only a channel
         self.out_channels = out_channels
         self.kernel_sizes = kernel_sizes
         
@@ -56,24 +57,26 @@ class ConvRec(nn.Module):
 
         super(ConvRNN, self).__init__()
 
-        # embeddings
+        # Embeddings
         self.embeddings = nn.Embedding(
             self.vocab, self.emb_dim, padding_idx=padding_idx)
 
-        # convs
-        self.convs = [nn.Conv2d(1,  # text only has one channel
-                                self.out_channels,
-                                # number of filters WxH for each kernel (H is
-                                # fixed to emb_dim to ensure H_out equals one)
-                                (self.emb_dim, kernel_size))
-                      for kernel_size in self.kernel_sizes]
+        # CNN
+        self.convs = []
+        for kernel_size in self.kernel_sizes:
+            self.convs.append(nn.Sequential(
+                nn.Conv2d(self.in_channels, self.out_channels,
+                          # number of filters HxW for each kernel (H is
+                          # fixed to emb_dim to ensure H_out equals one)
+                          (self.emb_dim, kernel_size)),
+                getattr(nn, self.act)))
 
         # RNN
         self.rnn = getattr(nn, self.cell)(
             self.out_channels, self.hid_dim, self.num_layers,
             dropout=self.dropout, bidirectional=self.bidi)
 
-        # projection
+        # Projection
         self.proj = nn.Linear(
             2 * self.hid_dim,
             n_classes)
@@ -84,7 +87,13 @@ class ConvRec(nn.Module):
         emb = emb.transpose(1, 2).unsqueeze(1)  # (batch x 1 x emb_dim x seq_len)
 
         # CNN
-        # [(batch x out_channels x H_out (= 1) x W_out), ...]
+        for conv in self.convs:
+            # (batch x out_channels x 1 x W_out)
+            out = conv(emb)
+            # (batch x out_channels x )
+            out = F.max_pool1d(out, (1, out.size(3)))
+            out = F.dropout(out, p=self.dropout, training=self.training)
+            emb = out.view()
         conv_out = [getattr(F, self.act)(conv(emb)) for conv in self.convs]
         # [(batch x out_channels x W_out), ...]
         conv_out = [out_i.squeeze(2) for out_i in conv_out]
