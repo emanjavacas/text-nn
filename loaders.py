@@ -49,7 +49,7 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
                     src.append(buf), trg.append([user_metadata["gender"]])
                     buf = []
                     continue
-                if not concat:
+                if not concat:  # discard tweet
                     buf = []
                     continue
 

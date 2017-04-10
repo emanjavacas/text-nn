@@ -29,7 +29,7 @@ def make_score_hook(model, dataset):
 
     def hook(trainer, epoch, batch, checkpoint):
         trues, preds = compute_scores(model, dataset)
-        print(metrics.classification_report(trues, preds))
+        trainer.log("info", metrics.classification_report(trues, preds))
 
     return hook
 
@@ -95,7 +95,7 @@ if __name__ == '__main__':
     print("Building model...")
     vocab, n_classes = len(train.d['src'].vocab), len(train.d['trg'].vocab)
     model = RCNN(vocab, args.emb_dim, args.hid_dim, args.max_dim, n_classes,
-                 dropout=args.dropout)
+                 dropout=args.dropout, padding_idx=train.d['src'].get_pad())
     if args.load_embeddings:
         weight = load_embeddings(
             train.d['src'].vocab, args.flavor, args.suffix, 'data')
@@ -123,4 +123,11 @@ if __name__ == '__main__':
 
     print("Testing...")
     test_true, test_pred = compute_scores(model, test)
-    print(metrics.classification_report(test_true, test_pred))
+    trainer.log("info", metrics.classification_report(test_true, test_pred))
+
+    from casket import Experiment
+    db = Experiment.use('db.json', exp_id='gender').model('RCNN')
+    db.add_result({'acc': metrics.accuracy_score(test_true, test_pred),
+                   'auc': metrics.roc_auc_score(test_true, test_pred),
+                   'f1': metrics.f1_score(test_true, test_pred)},
+                  params=vars(args))
