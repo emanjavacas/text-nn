@@ -13,7 +13,7 @@ from misc.loggers import StdLogger, VisdomLogger
 from misc.dataset import PairedDataset
 
 from loaders import load_twisty, load_dataset, load_embeddings
-from rcnn import RCNN
+import models
 
 
 def compute_scores(model, dataset):
@@ -46,13 +46,19 @@ def make_criterion(train):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # model
+    parser.add_argument('--model', required=True)
     parser.add_argument('--emb_dim', default=50, type=int)
     parser.add_argument('--hid_dim', default=50, type=int)
-    parser.add_argument('--max_dim', default=100, type=int)
     parser.add_argument('--dropout', default=0.0, type=float)
     parser.add_argument('--load_embeddings', action='store_true')
     parser.add_argument('--flavor', default=None)
     parser.add_argument('--suffix', default=None)
+    # - RCNN only
+    parser.add_argument('--max_dim', default=100, type=int)
+    # - ConvRec only
+    parser.add_argument('--out_channels', default=128, type=float)
+    parser.add_argument('--kernel_sizes', nargs='+', type=float,
+                        default=(5, 4, 3))
     # training
     parser.add_argument('--optim', default='Adam')
     parser.add_argument('--learning_rate', default=0.01, type=float)
@@ -94,8 +100,15 @@ if __name__ == '__main__':
 
     print("Building model...")
     vocab, n_classes = len(train.d['src'].vocab), len(train.d['trg'].vocab)
-    model = RCNN(vocab, args.emb_dim, args.hid_dim, args.max_dim, n_classes,
-                 dropout=args.dropout, padding_idx=train.d['src'].get_pad())
+
+    model = getattr(models, args.model)(
+        n_classes, vocab,
+        emb_dim=args.emb_dim, hid_dim=args.hid_dim,
+        dropout=args.dropout, padding_idx=train.d['src'].get_pad(),
+        # rcnn only
+        max_dim=args.max_dim,
+        # convrec only
+        out_channels=args.out_channels, kernel_sizes=args.kernel_sizes)
     if args.load_embeddings:
         weight = load_embeddings(
             train.d['src'].vocab, args.flavor, args.suffix, 'data')
