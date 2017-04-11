@@ -1,4 +1,5 @@
 
+import math
 import numpy as np
 
 import torch
@@ -61,16 +62,6 @@ class RCNN(BaseTextNN):
         self.max_proj = nn.Linear(self.cat_dim, self.max_dim)
         self.doc_proj = nn.Linear(self.max_dim, n_classes)
 
-    def init_embeddings(self, weight):
-        if isinstance(weight, np.ndarray):
-            self.embeddings.weight.data = torch.Tensor(weight)
-        elif isinstance(weight, torch.Tensor):
-            self.embeddings.weight.data = weight
-        elif isinstance(weight, nn.Parameter):
-            self.embeddings.weight = weight
-        else:
-            raise ValueError("Unknown weight type [%s]" % type(weight))
-
     def forward(self, inp):
         seq_len, batch = inp.size()
 
@@ -104,17 +95,48 @@ class RCNN(BaseTextNN):
         return F.log_softmax(self.doc_proj(y_max))  # (batch_size x n_classes)
 
 
-class ConvRec(nn.Module):
+class ConvLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_sizes, act='relu'):
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_sizes = kernel_sizes
+        self.act = act
+        super(ConvLayer, self).__init__()
+
+        self.convs = []
+        for d, (H, W) in enumerate(self.kernel_sizes):
+            conv = nn.Conv2d(self.in_channels, self.out_channels, (H, W))
+            self.add_module('ConvLayer_%d' % d, conv)
+            self.convs.append(conv)
+
+    def forward(self, inp):
+        conv_out = []
+        for conv in self.convs:
+            # (batch x out_channels x 1 x W_out)
+            out = conv(inp)
+            # (batch x out_channels x W_out)
+            out = out.squeeze(2)
+            # (batch x out_channels x 1)
+            out = F.max_pool1d(out, out.size(2))
+            # (batch x out_channels)
+            out = out.squeeze(2)
+            out = getattr(F, self.act)(out)
+            conv_out.append(out)
+        conv_out = torch.stack(conv_out)  # (num_kernels x batch x out_channels)
+        conv_out = conv_out.t() # (batch x num_kernels x out_channels)
+        return conv_out
+
+
+class CNNSent(BaseTextNN):
     """
-    Implementation of Efficient Char-level Document Classification
-    by Combining Convolution and Recurrent Layers:
-    https://arxiv.org/pdf/1602.00367.pdf
+    Implementation of Convolutional Neural Networks for Sentence Classification
 
     Parameters:
     -----------
     n_classes: int, number of classes
     vocab: int, vocabulary length
-    emb_dim: int, embedding dimention
+    emb_dim: int, embedding dimension
+    padding_idx: int or None, zero the corresponding output embedding
     out_channels: number of channels for all kernels
        This can't vary across filters their output congruency
     kernel_sizes: tuple of int, one for each kernel, i.e. number of kernels
@@ -123,85 +145,157 @@ class ConvRec(nn.Module):
        the dimension of the embeddings to ensure a kernel output height of 1
        (the kernel output width will vary depending on the input seq_len,
        but will as well get max pooled over)
-    hid_dim: int, RNN hidden dimension
-    cell: str, one of 'LSTM', 'GRU', 'RNN'
-    num_layers: int, depth of the RNN
-    bidi: bool, whether to use bidirectional RNNs
-    dropout: float
     act: str, activation function after the convolution
-    padding_idx: int or None, zero the corresponding output embedding
+    dropout: float
     """
     def __init__(self, n_classes,
                  # embedding parameters
-                 vocab, emb_dim=100,
+                 vocab, emb_dim=100, padding_idx=None,
                  # cnn parameters
-                 out_channels=128, kernel_sizes=(5, 4, 3),
-                 # rnn parameters
-                 hid_dim=128, cell='LSTM', num_layers=1, bidi=True,
+                 out_channels=128, kernel_sizes=(5, 4, 3), act='relu',
                  # rest parameters
-                 dropout=0.0, act='ReLU', padding_idx=None, **kwargs):
+                 dropout=0.0, **kwargs):
         self.vocab = vocab
         self.emb_dim = emb_dim
 
-        self.in_channels = 1    # text has only a channel
         self.out_channels = out_channels
         self.kernel_sizes = kernel_sizes
 
-        self.hid_dim = hid_dim
-        self.cell = cell
-        self.num_layers = num_layers
-        self.bidi = bidi
-
         self.dropout = dropout
-        self.act = act
 
-        super(ConvRec, self).__init__()
+        super(CNNSent, self).__init__()
 
         # Embeddings
         self.embeddings = nn.Embedding(
             self.vocab, self.emb_dim, padding_idx=padding_idx)
 
         # CNN
-        self.convs = [
-            nn.Sequential(
-                nn.Conv2d(self.in_channels, self.out_channels,
-                          # number of filters HxW for each kernel (H is
-                          # fixed to emb_dim to ensure H_out equals one)
-                          (self.emb_dim, kernel_size)),
-                getattr(nn, self.act))
-            for kernel_size in self.kernel_sizes]
-
-        # RNN
-        self.rnn = getattr(nn, self.cell)(
-            self.out_channels, self.hid_dim, self.num_layers,
-            dropout=self.dropout, bidirectional=self.bidi)
+        self.conv = ConvLayer(
+            in_channels=1,      # text has only one channel
+            out_channels=self.out_channels,
+            kernel_sizes=[(self.emb_dim, W) for W in self.kernel_sizes],
+            act=act)
 
         # Projection
-        self.proj = nn.Linear(
-            2 * self.hid_dim,
-            n_classes)
+        proj_in = len(self.kernel_sizes) * self.out_channels
+        self.proj = nn.Sequential(
+            nn.Linear(proj_in, n_classes),
+            nn.LogSoftmax())
 
     def forward(self, inp):
         # Embedding
         emb = self.embeddings(inp).t()  # (batch x seq_len x emb_dim)
-        emb = emb.transpose(1, 2).unsqueeze(1)  # (bs x 1 x emb_dim x seq_len)
+        emb = emb.transpose(1, 2)       # (batch x emb_dim x seq_len)
 
         # CNN
-        conv_out = []
-        for conv in self.convs:
-            # (batch x out_channels x 1 x W_out)
-            # W_out = seq_len - kernel_size + 1
-            out = conv(emb)
-            # (batch x out_channels x 1)
-            out = F.max_pool1d(out.squeeze(2), out.size(2))
-            out = F.dropout(out, p=self.dropout, training=self.training)
-            # (batch x out_channels)
-            conv_out.append(out.squeeze(2))
-        conv_out = torch.stack(conv_out)  # (num_kernels x bs x out_channels)
+        conv_out = self.conv(emb.unsqueeze(1))
         conv_out = F.dropout(
-            conv_out, dropout=self.dropout, training=self.training)
+            conv_out, p=self.dropout, training=self.training)
+
+        batch = conv_out.size(0)
+        # (batch x num_kernels x out_channels)
+        conv_out = conv_out.view(batch, -1)
+        return self.proj(conv_out)
+
+
+class ConvRec(BaseTextNN):
+    """
+    Efficient Char-level Document Classification
+    by Combining Convolution and Recurrent Layers:
+    https://arxiv.org/pdf/1602.00367.pdf
+
+    Parameters:
+    -----------
+    n_classes: int, number of classes
+    vocab: int, vocabulary length
+    emb_dim: int, embedding dimension
+    padding_idx: int or None, zero the corresponding output embedding
+    num_filters: int, number of filters per layers (out_channels?)
+    filter_sizes: tuple or list of int, filter size for the filters per layer
+        The length of this parameters implicitely determines the number of
+        convolutional layers.
+    pool_size: int, size of horizontal max pooling
+    hid_dim: int, RNN hidden dimension
+    cell: str, one of 'LSTM', 'GRU', 'RNN'
+    bidi: bool, whether to use bidirectional RNNs
+    dropout: float
+    act: str, activation function after the convolution
+    """
+    def __init__(self, n_classes,
+                 # embeddings
+                 vocab, emb_dim=100, padding_idx=None,
+                 # cnn
+                 num_filters=128, filter_sizes=(5, 3), pool_size=2, act='relu',
+                 # rnn parameters
+                 rnn_layers=1, hid_dim=128, cell='LSTM', bidi=True,
+                 # rest parameters
+                 dropout=0.0, **kwargs):
+        self.vocab = vocab
+        self.emb_dim = emb_dim
+
+        self.num_filters = num_filters
+        self.filter_sizes = filter_sizes
+        self.pool_size = pool_size
+        self.act = act
+
+        self.hid_dim = hid_dim
+        self.cell = cell
+        self.bidi = bidi
+        self.rnn_layers = rnn_layers
+
+        self.dropout = dropout
+
+        super(ConvRec, self).__init__()
+        
+        # Embeddings
+        self.embeddings = nn.Embedding(
+            self.vocab, self.emb_dim, padding_idx=padding_idx)
+
+        # CNN
+        self.conv_layers = []
+        for d, W in enumerate(filter_sizes):
+            padding = math.floor(W / 2)
+            H = self.emb_dim if d == 0 else self.num_filters
+            conv = nn.Conv2d(1, self.num_filters, (H, W))
+            self.add_module('Conv_%d' % d, conv)
+            self.conv_layers.append(conv)
+        
+        # RNN
+        self.rnn = getattr(nn, self.cell)(
+            self.num_filters, self.hid_dim, self.rnn_layers,
+            dropout=self.dropout, bidirectional=self.bidi)
+
+        # Proj
+        self.proj = nn.Sequential(
+            nn.Linear(2 * self.hid_dim, n_classes),
+            nn.LogSoftmax())
+
+    def forward(self, inp):
+        # Embedding
+        emb = self.embeddings(inp).t()  # (batch x seq_len x emb_dim)
+        emb = emb.transpose(1, 2)       # (batch x emb_dim x seq_len)
+        emb = emb.unsqueeze(1)          # (batch x 1 x emb_dim x seq_len)
+
+        # CNN
+        conv_in = emb
+        for conv_layer in self.conv_layers:
+            # (batch x num_filters x 1 x seq_len)
+            conv_out = conv_layer(conv_in)
+            conv_out = getattr(F, self.act)(conv_out)
+            # (batch x num_filters x 1 x floor(seq_len / 2))
+            conv_out = F.max_pool2d(conv_out, (1, 2))
+            conv_out = F.dropout(
+                conv_out, p=self.dropout, training=self.training)
+            # (batch x 1 x num_filters x floor(seq_len / 2))
+            conv_in = conv_out.transpose(1, 2)
 
         # RNN
-        rnn_out, _ = self.rnn(conv_out)
-        # take only last layer & last state output
-        return F.log_softmax(self.proj(rnn_out[-1]))
+        # (reduced seq_len x batch x num_filters)
+        rnn_in = conv_out.squeeze(2).t().transpose(0, 2).contiguous()
+        # (seq_len x batch x hid_dim * 2)
+        rnn_out, _ = self.rnn(rnn_in)
+
+        # Proj
+        # (batch x hid_dim * 2)
+        rnn_out = rnn_out[-1, :, :]
+        return self.proj(rnn_out)
