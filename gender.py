@@ -68,6 +68,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--outputfile', default=None)
     parser.add_argument('--checkpoints', default=100, type=int)
+    parser.add_argument('--exp_id', default='test')
     # dataset
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
@@ -84,6 +85,7 @@ if __name__ == '__main__':
         train = PairedDataset.from_disk('data/train.pt')
         test = PairedDataset.from_disk('data/test.pt')
         valid = PairedDataset.from_disk('data/valid.pt')
+        train.set_gpu(args.gpu), test.set_gpu(args.gpu), valid.set_gpu(args.gpu)
     else:
         src, trg = load_twisty(
             min_len=args.min_len, level=args.level, concat=args.concat,
@@ -128,7 +130,9 @@ if __name__ == '__main__':
                 len(list(model.parameters())))
     trainer.log('info', '* number of train batches/examples. %d/%d' %
                 (len(train), len(train) * args.batch_size))
-    std, visdom = StdLogger(args.outputfile), VisdomLogger(env='gender')
+    std = StdLogger(args.outputfile)
+    title = '{model}.{min_len}.{level}'.format(**vars(args))
+    visdom = VisdomLogger(env='gender', title=title)
     trainer.add_loggers(std, visdom)
     checks = max(len(train) // args.checkpoints, 1)
     trainer.add_hook(make_score_hook(model, valid), num_checkpoints=checks)
@@ -139,8 +143,9 @@ if __name__ == '__main__':
     trainer.log("info", metrics.classification_report(test_true, test_pred))
 
     from casket import Experiment
-    db = Experiment.use('db.json', exp_id='gender').model('RCNN')
+    db = Experiment.use('db.json', exp_id=args.exp_id).model('RCNN')
     db.add_result({'acc': metrics.accuracy_score(test_true, test_pred),
                    'auc': metrics.roc_auc_score(test_true, test_pred),
-                   'f1': metrics.f1_score(test_true, test_pred)},
+                   'f1': metrics.f1_score(test_true, test_pred),
+                   'test_examples': len(test_true)},
                   params=vars(args))
