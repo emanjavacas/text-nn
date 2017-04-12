@@ -11,6 +11,7 @@ from misc.optimizer import Optimizer
 from misc.trainer import Trainer
 from misc.loggers import StdLogger, VisdomLogger
 from misc.dataset import PairedDataset
+from modules import utils as u
 
 from loaders import load_twisty, load_dataset, load_embeddings
 import models
@@ -53,16 +54,16 @@ if __name__ == '__main__':
     parser.add_argument('--load_embeddings', action='store_true')
     parser.add_argument('--flavor', default=None)
     parser.add_argument('--suffix', default=None)
-    # - RCNN only
     parser.add_argument('--max_dim', default=100, type=int)
-    # - ConvRec only
-    parser.add_argument('--out_channels', default=128, type=int)
+    parser.add_argument('--out_channels', default=(12), nargs='+', type=int)
     parser.add_argument('--kernel_sizes', nargs='+', type=int,
                         default=(5, 4, 3))
+    parser.add_argument('--ktop', default=6, type=int)
     # training
-    parser.add_argument('--optim', default='Adam')
+    parser.add_argument('--optim', default='Adagrad')
     parser.add_argument('--learning_rate', default=0.01, type=float)
     parser.add_argument('--max_norm', default=5., type=float)
+    parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--batch_size', type=int, default=1024)
     parser.add_argument('--gpu', action='store_true')
@@ -102,29 +103,35 @@ if __name__ == '__main__':
 
     print("Building model...")
     vocab, n_classes = len(train.d['src'].vocab), len(train.d['trg'].vocab)
+    if args.model != 'DCNN':
+        out_channels = args.out_channels[0]
 
     model = getattr(models, args.model)(
         n_classes, vocab,
         emb_dim=args.emb_dim, hid_dim=args.hid_dim,
         dropout=args.dropout, padding_idx=train.d['src'].get_pad(),
-        # rcnn only
+        # cnn
+        out_channels=out_channels, kernel_sizes=args.kernel_sizes,
+        # - rcnn only
         max_dim=args.max_dim,
-        # convrec only
-        out_channels=args.out_channels, kernel_sizes=args.kernel_sizes)
+        # - DCNN only
+        ktop=args.ktop)
+    model.apply(u.make_initializer())
+    print(model)
+
     if args.load_embeddings:
         weight = load_embeddings(
             train.d['src'].vocab, args.flavor, args.suffix, 'data')
         model.init_embeddings(weight)
-    print(model)
 
     criterion = make_criterion(train)
     if args.gpu:
         model.cuda(), criterion.cuda()
 
-    optimizer = Optimizer(model.parameters(), args.optim,
-                          lr=args.learning_rate, max_norm=args.max_norm)
+    optimizer = Optimizer(
+        model.parameters(), args.optim, lr=args.learning_rate,
+        max_norm=args.max_norm, weight_decay=args.weight_decay)
 
-    print("Training...")
     trainer = Trainer(model, datasets, criterion, optimizer)
     trainer.log('info', '* number of parameters. %d' %
                 len(list(model.parameters())))
@@ -138,7 +145,6 @@ if __name__ == '__main__':
     trainer.add_hook(make_score_hook(model, valid), num_checkpoints=checks)
     trainer.train(args.epochs, args.checkpoints, shuffle=True, gpu=args.gpu)
 
-    print("Testing...")
     test_true, test_pred = compute_scores(model, test)
     trainer.log("info", metrics.classification_report(test_true, test_pred))
 
