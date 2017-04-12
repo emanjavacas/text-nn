@@ -55,7 +55,7 @@ if __name__ == '__main__':
     parser.add_argument('--flavor', default=None)
     parser.add_argument('--suffix', default=None)
     parser.add_argument('--max_dim', default=100, type=int)
-    parser.add_argument('--out_channels', default=(12), nargs='+', type=int)
+    parser.add_argument('--out_channels', default=(12,), nargs='+', type=int)
     parser.add_argument('--kernel_sizes', nargs='+', type=int,
                         default=(5, 4, 3))
     parser.add_argument('--ktop', default=6, type=int)
@@ -105,6 +105,8 @@ if __name__ == '__main__':
     vocab, n_classes = len(train.d['src'].vocab), len(train.d['trg'].vocab)
     if args.model != 'DCNN':
         out_channels = args.out_channels[0]
+    else:
+        out_channels = args.out_channels
 
     model = getattr(models, args.model)(
         n_classes, vocab,
