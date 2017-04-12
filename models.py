@@ -210,8 +210,8 @@ class ConvRec(BaseTextNN):
     vocab: int, vocabulary length
     emb_dim: int, embedding dimension
     padding_idx: int or None, zero the corresponding output embedding
-    num_filters: int, number of filters per layers (out_channels?)
-    filter_sizes: tuple or list of int, filter size for the filters per layer
+    out_channels: int, number of filters per layers (out_channels?)
+    kernel_sizes: tuple or list of int, filter size for the filters per layer
         The length of this parameters implicitely determines the number of
         convolutional layers.
     pool_size: int, size of horizontal max pooling
@@ -225,7 +225,7 @@ class ConvRec(BaseTextNN):
                  # embeddings
                  vocab, emb_dim=100, padding_idx=None,
                  # cnn
-                 num_filters=128, filter_sizes=(5, 3), pool_size=2, act='relu',
+                 out_channels=128, kernel_sizes=(5, 3), pool_size=2, act='relu',
                  # rnn parameters
                  rnn_layers=1, hid_dim=128, cell='LSTM', bidi=True,
                  # rest parameters
@@ -233,8 +233,8 @@ class ConvRec(BaseTextNN):
         self.vocab = vocab
         self.emb_dim = emb_dim
 
-        self.num_filters = num_filters
-        self.filter_sizes = filter_sizes
+        self.out_channels = out_channels  # num_filters
+        self.kernel_sizes = kernel_sizes  # filter_sizes
         self.pool_size = pool_size
         self.act = act
 
@@ -253,16 +253,16 @@ class ConvRec(BaseTextNN):
 
         # CNN
         self.conv_layers = []
-        for d, W in enumerate(filter_sizes):
+        for d, W in enumerate(self.kernel_sizes):
             padding = math.floor(W / 2)
-            H = self.emb_dim if d == 0 else self.num_filters
-            conv = nn.Conv2d(1, self.num_filters, (H, W))
+            H = self.emb_dim if d == 0 else self.out_channels
+            conv = nn.Conv2d(1, self.out_channels, (H, W))
             self.add_module('Conv_%d' % d, conv)
             self.conv_layers.append(conv)
         
         # RNN
         self.rnn = getattr(nn, self.cell)(
-            self.num_filters, self.hid_dim, self.rnn_layers,
+            self.out_channels, self.hid_dim, self.rnn_layers,
             dropout=self.dropout, bidirectional=self.bidi)
 
         # Proj
@@ -279,18 +279,18 @@ class ConvRec(BaseTextNN):
         # CNN
         conv_in = emb
         for conv_layer in self.conv_layers:
-            # (batch x num_filters x 1 x seq_len)
+            # (batch x out_channels x 1 x seq_len)
             conv_out = conv_layer(conv_in)
             conv_out = getattr(F, self.act)(conv_out)
-            # (batch x num_filters x 1 x floor(seq_len / 2))
+            # (batch x out_channels x 1 x floor(seq_len / 2))
             conv_out = F.max_pool2d(conv_out, (1, 2))
             conv_out = F.dropout(
                 conv_out, p=self.dropout, training=self.training)
-            # (batch x 1 x num_filters x floor(seq_len / 2))
+            # (batch x 1 x out_channels x floor(seq_len / 2))
             conv_in = conv_out.transpose(1, 2)
 
         # RNN
-        # (reduced seq_len x batch x num_filters)
+        # (reduced seq_len x batch x out_channels)
         rnn_in = conv_out.squeeze(2).t().transpose(0, 2).contiguous()
         # (seq_len x batch x hid_dim * 2)
         rnn_out, _ = self.rnn(rnn_in)

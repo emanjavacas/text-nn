@@ -56,8 +56,8 @@ if __name__ == '__main__':
     # - RCNN only
     parser.add_argument('--max_dim', default=100, type=int)
     # - ConvRec only
-    parser.add_argument('--out_channels', default=128, type=float)
-    parser.add_argument('--kernel_sizes', nargs='+', type=float,
+    parser.add_argument('--out_channels', default=128, type=int)
+    parser.add_argument('--kernel_sizes', nargs='+', type=int,
                         default=(5, 4, 3))
     # training
     parser.add_argument('--optim', default='Adam')
