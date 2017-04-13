@@ -34,7 +34,7 @@ def folding(t, factor=2):
     sum-pooling across the feature dimension (instead of the seq_len dim).
     """
     rows = [fold.sum(2) for fold in t.split(factor, dim=2)]
-    return torch.cat(rows)
+    return torch.cat(rows, 2)
 
 
 class DCNN(BaseTextNN):
@@ -66,11 +66,6 @@ class DCNN(BaseTextNN):
             The number of layers according to kernel_sizes doesn't match
             those according to out_channels. kernel_sizes will be truncated
             to the length of out_channels.""")
-        if emb_dim % folding != 0:
-            warnings.warn("""
-            Embedding dimension of [%d] doesn't evenly fold over a folding
-            factor of [%d]. This will result in a feature being lost per 
-            convolutional layer.""" % (emb_dim, folding))
 
         self.vocab = vocab
         self.emb_dim = emb_dim
@@ -91,17 +86,22 @@ class DCNN(BaseTextNN):
             self.vocab, self.emb_dim, padding_idx=padding_idx)
 
         # CNN
+        H = self.emb_dim      # variable to get H after all CNN layers
         self.conv_layers = []
         for d, (C_o, K) in enumerate(zip(self.out_channels, self.kernel_sizes)):
+            # text only has one channel
             C_i = 1 if d == 0 else self.out_channels[d - 1]
+            # feature map H gets folded each layer
+            H = math.ceil(H / self.folding)
             # wide(filter_size) = full(filter_size) * 2
             pad = math.floor(K / 2) * 2 if self.conv_type == 'wide' else 0
             conv = nn.Conv2d(C_i, C_o, (1, K), padding=(0, pad))
             self.add_module('Conv2d_%d' % d, conv)
             self.conv_layers.append(conv)
+        H = math.ceil(H / folding)  # last folding after convolutions
 
         # Projection
-        proj_in = self.out_channels[-1] * self.kernel_sizes[-1] // 2 * self.ktop
+        proj_in = self.out_channels[-1] * H * self.ktop
         self.proj = nn.Sequential(
             nn.Linear(proj_in, n_classes),
             nn.LogSoftmax())
@@ -120,15 +120,19 @@ class DCNN(BaseTextNN):
             # (batch x out_channels x (emb_dim\prev-kernel_sizes/2) x (seq_len + pad))
             conv_out = folding(conv_out)
             L, s = len(self.conv_layers), conv_out.size(3)
-            ktop = dynamic_ktop(l, L, s, self.ktop)
             # (batch x out_channels x (emb_dim\prev-kernel_sizes/2) x ktop)
-            conv_out = global_kmax_pool(conv_out, ktop)
+            conv_out = global_kmax_pool(conv_out, dynamic_ktop(l, L, s, self.ktop))
             conv_out = getattr(F, self.act)(conv_out)
             conv_in = conv_out
 
         conv_out = F.dropout(
             conv_out, p=self.dropout, training=self.training)
 
+        # Final k-max
+        conv_out = global_kmax_pool(conv_out, self.ktop)
+        conv_out = folding(conv_out)
+
         # Projection
         batch = conv_out.size(0)
-        return self.proj(conv_out.view(batch, -1))
+        proj_in = conv_out.view(batch, -1)
+        return self.proj(proj_in)
