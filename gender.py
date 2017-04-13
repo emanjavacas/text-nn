@@ -60,7 +60,8 @@ if __name__ == '__main__':
     parser.add_argument('--out_channels', default=(12,), nargs='+', type=int)
     parser.add_argument('--kernel_sizes', nargs='+', type=int,
                         default=(5, 4, 3))
-    parser.add_argument('--ktop', default=6, type=int)
+    parser.add_argument('--act', default='relu')
+    parser.add_argument('--ktop', default=4, type=int)
     # training
     parser.add_argument('--optim', default='Adagrad')
     parser.add_argument('--learning_rate', default=0.01, type=float)
@@ -114,7 +115,7 @@ if __name__ == '__main__':
         emb_dim=args.emb_dim, hid_dim=args.hid_dim,
         dropout=args.dropout, padding_idx=train.d['src'].get_pad(),
         # cnn
-        out_channels=out_channels, kernel_sizes=args.kernel_sizes,
+        out_channels=out_channels, kernel_sizes=args.kernel_sizes, act=args.act,
         # - rcnn only
         max_dim=args.max_dim,
         # - DCNN only
