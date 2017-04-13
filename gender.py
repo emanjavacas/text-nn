@@ -1,4 +1,6 @@
 
+import os
+
 from collections import Counter
 import argparse
 
@@ -78,27 +80,26 @@ if __name__ == '__main__':
     parser.add_argument('--level', default='token')
     parser.add_argument('--concat', action='store_true')
     parser.add_argument('--cache_data', action='store_true')
-    parser.add_argument('--load_data', action='store_true')
     args = parser.parse_args()
 
     print("Loading data...")
-    if args.load_data:
-        train = PairedDataset.from_disk('data/train.pt')
-        test = PairedDataset.from_disk('data/test.pt')
-        valid = PairedDataset.from_disk('data/valid.pt')
-        train.set_gpu(args.gpu), test.set_gpu(args.gpu), valid.set_gpu(args.gpu)
-    else:
+    prefix = '{level}.{min_len}.{min_freq}.{concat}'.format(**vars(args))
+    if not args.cache_data or not os.path.isfile('data/%s_train.pt' % prefix):
         src, trg = load_twisty(
             min_len=args.min_len, level=args.level, concat=args.concat,
             processor=text_processor(lower=False))
         train, test, valid = load_dataset(
             src, trg, args.batch_size, min_freq=args.min_freq,
             gpu=args.gpu, dev=args.dev, test=args.test)
-    if args.cache_data:
-        assert not args.load_data, "Data is already cached"
-        train.to_disk('data/train.pt')
-        test.to_disk('data/test.pt')
-        valid.to_disk('data/valid.pt')
+        if args.cache_data:
+            train.to_disk('data/%s_train.pt' % prefix)
+            test.to_disk('data/%s_test.pt' % prefix)
+            valid.to_disk('data/%s_valid.pt' % prefix)
+    else:
+        train = PairedDataset.from_disk('data/%s_train.pt' % prefix)
+        test = PairedDataset.from_disk('data/%s_test.pt' % prefix)
+        valid = PairedDataset.from_disk('data/%s_valid.pt' % prefix)
+        train.set_gpu(args.gpu), test.set_gpu(args.gpu), valid.set_gpu(args.gpu)
     datasets = {'train': train, 'valid': valid, 'test': test}
 
     print("Building model...")
