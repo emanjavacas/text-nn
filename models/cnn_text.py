@@ -64,7 +64,7 @@ class CNNText(BaseTextNN):
                  # embedding parameters
                  vocab, emb_dim=100, padding_idx=None,
                  # cnn parameters
-                 out_channels=128, kernel_sizes=(5, 4, 3), act='relu',
+                 out_channels=100, kernel_sizes=(5, 4, 3), act='relu',
                  # rest parameters
                  dropout=0.0, **kwargs):
         self.vocab = vocab

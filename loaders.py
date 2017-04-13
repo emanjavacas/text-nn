@@ -84,9 +84,25 @@ def load_embeddings(vocab, flavor, suffix, directory):
     """
     Load embeddings from a w2v model for model pretraining
     """
-    embedder = Embedder(flavor=flavor, suffix=suffix, directory=directory)
-    embedder.load()
-    weight = np.zeros((len(vocab), embedder.size))
+    size, embedder = 0, None
+
+    if flavor == 'glove':
+        embedder = {}
+        with open(os.path.join(directory, 'glove.%s.txt' % suffix), 'r') as f:
+            for l in f:
+                w, *vec = l.strip().split(' ')
+                size = len(vec)
+                embedder[w] = np.array(vec, dtype=np.float64)
+    else:
+        embedder = Embedder(
+            flavor=flavor, suffix=suffix, directory=directory)
+        embedder.load()
+        size = embedder.size
+
+    weight = np.zeros((len(vocab), size))
     for idx, w in enumerate(vocab):
-        weight[idx] = embedder[w]
+        try:
+            weight[idx] = embedder[w]
+        except KeyError:
+            pass                # default to zero vector
     return weight
