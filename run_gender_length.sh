@@ -14,6 +14,7 @@ function select_model()
 	    EMB_DIM=300
 	    FLAVOR=ft
 	    SUFFIX=wiki
+	    EPOCHS=5
 	    ;;
 	CNNText)
 	    ACT=relu
@@ -22,6 +23,7 @@ function select_model()
 	    EMB_DIM=300
 	    FLAVOR=ft
 	    SUFFIX=wiki
+	    EPOCHS=5
 	    ;;
 	DCNN)
 	    ACT=tanh
@@ -30,6 +32,7 @@ function select_model()
 	    EMB_DIM=60
 	    FLAVOR=glove
 	    SUFFIX='6B.50d'
+	    EPOCHS=8
 	    ;;
     esac
 }
@@ -53,7 +56,7 @@ done
 for LENGTH in $(seq 60 150 1000); do
     for MODEL in $MODELS; do
 	select_model $MODEL
-	# reduce embedding dimension for character-based models
+	# forcely reduce embedding dimension for character-based models
 	EMB_DIM=24
 	python gender.py --model $MODEL --gpu --epochs $EPOCHS --dropout $DROPOUT --emb_dim $EMB_DIM --act $ACT --kernel_size $KERNEL_SIZES --out_channels $OUT_CHANNELS --level char  --min_len $LENGTH --concat --exp_id   char_min_len --cache_data --min_freq 100 
     done

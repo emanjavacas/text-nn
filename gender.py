@@ -4,6 +4,7 @@ import os
 from collections import Counter
 import argparse
 
+import numpy as np
 from sklearn import metrics
 import torch
 import torch.nn as nn
@@ -154,9 +155,11 @@ if __name__ == '__main__':
     trainer.log("info", metrics.classification_report(test_true, test_pred))
 
     from casket import Experiment
-    db = Experiment.use('db.json', exp_id=args.exp_id).model('RCNN')
-    db.add_result({'acc': metrics.accuracy_score(test_true, test_pred),
-                   'auc': metrics.roc_auc_score(test_true, test_pred),
-                   'f1': metrics.f1_score(test_true, test_pred),
-                   'test_examples': len(test_true)},
+    db = Experiment.use('db.json', exp_id=args.exp_id).model(args.model)
+    p, r, f, s = metrics.precision_recall_fscore_support(test_true, test_pred)
+    db.add_result({'precision': p.tolist(), 'recall': r.tolist(),
+                   'fscore': f.tolist(), 'support': s.tolist(),
+                   'class_precision': np.average(p, weights=s),
+                   'class_recall': np.average(r, weights=s),
+                   'class_fscore': np.average(f, weights=s)},
                   params=vars(args))
