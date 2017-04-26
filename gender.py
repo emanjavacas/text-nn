@@ -9,14 +9,15 @@ from sklearn import metrics
 import torch
 import torch.nn as nn
 
-from misc.preprocess import text_processor
-from misc.optimizer import Optimizer
-from misc.trainer import Trainer
-from misc.loggers import StdLogger, VisdomLogger
-from misc.dataset import PairedDataset
-from modules import utils as u
+from seqmod.misc.preprocess import text_processor
+from seqmod.misc.optimizer import Optimizer
+from seqmod.misc.trainer import Trainer
+from seqmod.misc.loggers import StdLogger, VisdomLogger
+from seqmod.misc.dataset import PairedDataset
+from seqmod.modules import utils as u
 
 from loaders import load_twisty, load_dataset, load_embeddings
+
 import models
 
 

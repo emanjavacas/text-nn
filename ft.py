@@ -2,12 +2,13 @@
 import math
 import argparse
 import random
-random.seed(1001)
 
 import fasttext as ft
 from sklearn.metrics import classification_report
 
 from loaders import load_twisty
+
+random.seed(1001)
 
 
 def permute(l):
