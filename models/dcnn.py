@@ -129,8 +129,8 @@ class DCNN(BaseTextNN):
             conv_out, p=self.dropout, training=self.training)
 
         # Final k-max
-        conv_out = global_kmax_pool(conv_out, self.ktop)
-        conv_out = folding(conv_out)
+        # conv_out = global_kmax_pool(conv_out, self.ktop)
+        # conv_out = folding(conv_out)
 
         # Projection
         batch = conv_out.size(0)
