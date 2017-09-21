@@ -66,17 +66,15 @@ if __name__ == '__main__':
     parser.add_argument('--act', default='relu')
     parser.add_argument('--ktop', default=4, type=int)
     # training
-    parser.add_argument('--optim', default='Adagrad')
-    parser.add_argument('--learning_rate', default=0.01, type=float)
-    parser.add_argument('--max_norm', default=5., type=float)
-    parser.add_argument('--weight_decay', default=0, type=float)
-    parser.add_argument('--epochs', default=10, type=int)
-    parser.add_argument('--batch_size', type=int, default=1024)
+    parser.add_argument('--optim', default='Adam')
+    parser.add_argument('--learning_rate', default=0.001, type=float)
+    parser.add_argument('--max_norm', default=20., type=float)
+    parser.add_argument('--batch_size', type=int, default=264)
     parser.add_argument('--gpu', action='store_true')
-    parser.add_argument('--outputfile', default=None)
     parser.add_argument('--checkpoints', default=100, type=int)
     parser.add_argument('--hooks_per_epoch', default=10, type=int)
-    parser.add_argument('--exp_id', default='test')
+    parser.add_argument('--max_iter', default=81, type=int)
+    parser.add_argument('--eta', default=3, type=int)
     # dataset
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
@@ -104,7 +102,7 @@ if __name__ == '__main__':
     else:
         train = PairedDataset.from_disk('data/%s_train.pt' % prefix)
         valid = PairedDataset.from_disk('data/%s_valid.pt' % prefix)
-        train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
+    train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
     datasets = {'train': train, 'valid': valid}
 
     param_sampler = make_sampler({
@@ -174,7 +172,6 @@ if __name__ == '__main__':
             early_stopping.add_checkpoint(valid_loss)
 
         trainer = Trainer(model, datasets, criterion, optimizer)
-        trainer.add_loggers(StdLogger(args.outputfile))
         trainer.add_hook(make_score_hook(model, valid),
                          hooks_per_epoch=args.hooks_per_epoch)
         trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
@@ -190,6 +187,6 @@ if __name__ == '__main__':
 
         return run
 
-    hb = Hyperband(param_sampler, model_builder,
-                   max_iter=args.max_iter, eta=args.eta)
+    hb = Hyperband(
+        param_sampler, model_builder, max_iter=args.max_iter, eta=args.eta)
     print(hb.run())
