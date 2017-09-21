@@ -40,7 +40,7 @@ class ConvLayer(nn.Module):
 
 class CNNText(BaseTextNN):
     """
-    Implementation of 'Convolutional Neural Networks for Sentence Classification'
+    'Convolutional Neural Networks for Sentence Classification'
     http://www.aclweb.org/anthology/D14-1181
 
     Parameters:

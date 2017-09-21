@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from misc.dataset import Dict, PairedDataset
+from seqmod.misc.dataset import Dict, PairedDataset
 
 from w2v import Embedder
 
@@ -56,16 +56,8 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
     return src, trg
 
 
-def sort_key(pair):
-    """
-    Sort examples by tweet length
-    """
-    src, trg = pair
-    return len(src)
-
-
 def load_dataset(src, trg, batch_size, max_size=20000, min_freq=5,
-                 gpu=False, shuffle=True, sort_key=sort_key, **kwargs):
+                 gpu=False, shuffle=True, **kwargs):
     """
     Wrapper function for dataset with sensible, overwritable defaults
     """
@@ -76,7 +68,7 @@ def load_dataset(src, trg, batch_size, max_size=20000, min_freq=5,
     labels_dict.fit(trg)
     d = {'src': tweets_dict, 'trg': labels_dict}
     splits = PairedDataset(src, trg, d, batch_size, gpu=gpu).splits(
-        shuffle=shuffle, sort_key=sort_key, **kwargs)
+        shuffle=shuffle, **kwargs)
     return splits
 
 
@@ -88,7 +80,7 @@ def load_embeddings(vocab, flavor, suffix, directory):
 
     if flavor == 'glove':
         embedder = {}
-        with open(os.path.join(directory, 'glove.%s.txt' % suffix), 'r') as f:
+        with open(os.path.join(directory, f'glove.{suffix}.txt'), 'r') as f:
             for l in f:
                 w, *vec = l.strip().split(' ')
                 size = len(vec)

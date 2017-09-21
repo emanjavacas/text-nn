@@ -46,7 +46,7 @@ class DCNN(BaseTextNN):
 
     Convolutions between 1d-filters (d x m) and the embedding sentence
     matrix (d x s) are applied in 2-d yielding a matrix (d x (s + m - 1))
-    or (d x (s - m + 1) depending on whether wide or narrow 
+    or (d x (s - m + 1) depending on whether wide or narrow
     convolutions are used (the difference being in using padding or not).
     After each convolutional layer, the top k features of the resulting
     feature map are taken row-wise (e.g. the number of top k operations
