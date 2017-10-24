@@ -33,8 +33,10 @@ class ConvLayer(nn.Module):
             out = out.squeeze(2)
             out = getattr(F, self.act)(out)
             conv_out.append(out)
-        conv_out = torch.stack(conv_out)  # (num_kernels x batch x out_channels)
-        conv_out = conv_out.t() # (batch x num_kernels x out_channels)
+        # (num_kernels x batch x out_channels)
+        conv_out = torch.stack(conv_out)
+        # (batch x num_kernels x out_channels)
+        conv_out = conv_out.t()
         return conv_out
 
 

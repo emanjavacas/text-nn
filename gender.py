@@ -1,13 +1,10 @@
 
 import os
-
 from collections import Counter
 import argparse
 
 import numpy as np
 from sklearn import metrics
-import torch
-import torch.nn as nn
 
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.optimizer import Optimizer
@@ -37,15 +34,6 @@ def make_score_hook(model, dataset):
         trainer.log("info", metrics.classification_report(trues, preds))
 
     return hook
-
-
-def make_criterion(train):
-    counts = Counter([y[0] for y in train.data['trg']])
-    total = sum(counts.values())
-    weight = torch.Tensor(len(counts)).zero_()
-    for label, count in counts.items():
-        weight[label] = total / count
-    return nn.NLLLoss(weight=weight)
 
 
 if __name__ == '__main__':
@@ -84,7 +72,6 @@ if __name__ == '__main__':
     parser.add_argument('--concat', action='store_true')
     parser.add_argument('--cache_data', action='store_true')
     args = parser.parse_args()
-    print(vars(args))
 
     print("Loading data...")
     prefix = '{level}.{min_len}.{min_freq}.{concat}'.format(**vars(args))
@@ -110,6 +97,9 @@ if __name__ == '__main__':
     print('* number of train batches. %d' % len(train))
     datasets = {'train': train, 'valid': valid, 'test': test}
 
+    class_weight = Counter([y[0] for y in train.data['trg']])
+    class_weight = [v for k, v in sorted(class_weight.items())]
+
     print("Building model...")
     out_channels = args.out_channels
     if args.model != 'DCNN':
@@ -117,6 +107,7 @@ if __name__ == '__main__':
 
     model = getattr(models, args.model)(
         len(train.d['trg'].vocab), len(train.d['src'].vocab),
+        weight=class_weight,    # weight loss by class
         emb_dim=args.emb_dim, hid_dim=args.hid_dim,
         dropout=args.dropout, padding_idx=train.d['src'].get_pad(),
         # cnn
@@ -133,19 +124,18 @@ if __name__ == '__main__':
     print('* number of parameters. %d' % len(list(model.parameters())))
 
     if args.load_embeddings:
-        weight = load_embeddings(
+        emb_weight = load_embeddings(
             train.d['src'].vocab, args.flavor, args.suffix, 'data')
-        model.init_embeddings(weight)
+        model.init_embeddings(emb_weight)
 
-    criterion = make_criterion(train)
     if args.gpu:
-        model.cuda(), criterion.cuda()
+        model.cuda()
 
     optimizer = Optimizer(
         model.parameters(), args.optim, lr=args.learning_rate,
         max_norm=args.max_norm, weight_decay=args.weight_decay)
 
-    trainer = Trainer(model, datasets, criterion, optimizer)
+    trainer = Trainer(model, datasets, optimizer)
     trainer.add_loggers(StdLogger(args.outputfile))
     trainer.add_hook(make_score_hook(model, valid), hooks_per_epoch=10)
     trainer.train(args.epochs, args.checkpoints, shuffle=True, gpu=args.gpu)

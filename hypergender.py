@@ -105,7 +105,7 @@ if __name__ == '__main__':
     train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
     datasets = {'train': train, 'valid': valid}
 
-    param_sampler = make_sampler({
+    sampler = make_sampler({
         'emb_dim': ['uniform', int, 20, 50],
         'hid_dim': ['uniform', int, 20, 100],
         'dropout': ['loguniform', float, math.log(0.1), math.log(0.5)],
@@ -124,69 +124,77 @@ if __name__ == '__main__':
 
     vocab, n_classes = len(train.d['src'].vocab), len(train.d['trg'].vocab)
 
-    def model_builder(params):
-        if params['model'] == 'DCNN':
-            kernel_sizes, out_channels = (7, 5), (6, 14),
-            out_channels = tuple(
-                [c * params['dcnn_factor'] for c in out_channels])
-            kernel_sizes = tuple(
-                [k * params['dcnn_factor'] for k in kernel_sizes])
-        else:
-            kernel_sizes = params['kernel_sizes']
-            out_channels = params['out_channels']
+    class create_runner(object):
+        def __init__(self, params):
+            self.trainer, self.early_stopping = None, None
 
-        if params['load_embeddings']:
-            weight = load_embeddings(
-                train.d['src'].vocab, args.flavor, args.suffix, 'data')
-            emb_dim = args.emb_dim
-        else:
-            emb_dim = params['emb_dim']
+            if params['model'] == 'DCNN':
+                kernel_sizes, out_channels = (7, 5), (6, 14),
+                out_channels = tuple(
+                    [c * params['dcnn_factor'] for c in out_channels])
+                kernel_sizes = tuple(
+                    [k * params['dcnn_factor'] for k in kernel_sizes])
+            else:
+                kernel_sizes = params['kernel_sizes']
+                out_channels = params['out_channels']
 
-        model = getattr(models, args.model)(
-            n_classes, vocab, emb_dim=emb_dim, hid_dim=params['hid_dim'],
-            dropout=params['dropout'], padding_idx=train.d['src'].get_pad(),
-            # cnn
-            act=args.act, out_channels=out_channels, kernel_sizes=kernel_sizes,
-            # - rcnn only
-            max_dim=params['max_dim'],
-            # - DCNN only
-            ktop=params['ktop'])
+            if params['load_embeddings']:
+                weight = load_embeddings(
+                    train.d['src'].vocab, args.flavor, args.suffix, 'data')
+                emb_dim = args.emb_dim
+            else:
+                emb_dim = params['emb_dim']
 
-        u.initialize_model(model)
+            model = getattr(models, args.model)(
+                n_classes, vocab, emb_dim=emb_dim, hid_dim=params['hid_dim'],
+                dropout=params['dropout'],
+                padding_idx=train.d['src'].get_pad(),
+                # cnn
+                act=args.act, out_channels=out_channels,
+                kernel_sizes=kernel_sizes,
+                # - rcnn only
+                max_dim=params['max_dim'],
+                # - DCNN only
+                ktop=params['ktop'])
 
-        if params['load_embeddings']:
-            if not args.load_embeddings:
-                raise ValueError("Need load_embeddings")
-            model.init_embeddings(weight)
+            u.initialize_model(model)
 
-        criterion = make_criterion(train)
+            if params['load_embeddings']:
+                if not args.load_embeddings:
+                    raise ValueError("Need load_embeddings")
+                model.init_embeddings(weight)
 
-        optimizer = Optimizer(
-            model.parameters(), args.optim, lr=args.learning_rate,
-            max_norm=args.max_norm, weight_decay=args.weight_decay)
+            optimizer = Optimizer(
+                model.parameters(), args.optim, lr=args.learning_rate,
+                max_norm=args.max_norm, weight_decay=args.weight_decay)
 
-        early_stopping = EarlyStopping(5, patience=3, reset_patience=False)
+            self.early_stopping = EarlyStopping(
+                5, patience=3, reset_patience=False)
 
-        def early_stop_hook(trainer, epoch, batch_num, num_checkpoints):
-            valid_loss = trainer.merge_loss(trainer.validate_model())
-            early_stopping.add_checkpoint(valid_loss)
+            def early_stop_hook(trainer, epoch, batch_num, num_checkpoints):
+                valid_loss = trainer.validate_model()
+                self.early_stopping.add_checkpoint(sum(valid_loss.pack()))
 
-        trainer = Trainer(model, datasets, criterion, optimizer)
-        trainer.add_hook(make_score_hook(model, valid),
-                         hooks_per_epoch=args.hooks_per_epoch)
-        trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
+            trainer = Trainer(model, datasets, optimizer)
+            trainer.add_hook(make_score_hook(model, valid),
+                             hooks_per_epoch=args.hooks_per_epoch)
+            trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
+            self.trainer = trainer
 
-        def run(n_iters):
+        def __call__(self, n_iters):
             batches = int(len(train) / args.max_iter) * 5
-            if args.gpu:
-                model.cuda(), criterion.cuda()
-            (_, loss), _ = trainer.train_batches(
-                batches, args.checkpoints, shuffle=True, gpu=args.gpu)
-            model.cpu()
-            return {'loss': loss, 'early_stop': early_stopping.stopped}
 
-        return run
+            if args.gpu:
+                self.trainer.model.cuda()
+
+            (_, loss), _ = self.trainer.train_batches(
+                batches, args.checkpoints, shuffle=True)
+
+            self.trainer.model.model.cpu()
+
+            return {'loss': loss, 'early_stop': self.early_stopping.stopped}
 
     hb = Hyperband(
-        param_sampler, model_builder, max_iter=args.max_iter, eta=args.eta)
+        sampler, create_runner, max_iter=args.max_iter, eta=args.eta)
+
     print(hb.run())
