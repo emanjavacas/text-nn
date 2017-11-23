@@ -18,9 +18,9 @@ from seqmod.misc.early_stopping import EarlyStopping
 from seqmod.hyper import make_sampler, Hyperband
 import seqmod.utils as u
 
-from loaders import load_twisty, load_dataset, load_embeddings
+from text_nn.loaders import load_twisty, load_dataset, load_embeddings
 
-import models
+from text_nn import models
 
 
 def compute_scores(model, dataset):

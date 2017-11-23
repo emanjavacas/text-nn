@@ -13,7 +13,7 @@ from seqmod.misc.loggers import StdLogger
 from seqmod.misc.dataset import PairedDataset
 import seqmod.utils as u
 
-from loaders import load_twisty, load_dataset, load_embeddings
+from text_nn.loaders import load_twisty, load_dataset, load_embeddings
 
 import models
 

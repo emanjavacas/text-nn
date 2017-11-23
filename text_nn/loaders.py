@@ -6,7 +6,7 @@ import numpy as np
 
 from seqmod.misc.dataset import Dict, PairedDataset
 
-from w2v import Embedder
+from text_nn.w2v import Embedder
 
 
 def identity(x):

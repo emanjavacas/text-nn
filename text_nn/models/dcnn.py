@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.base import BaseTextNN
+from text_nn.models.base import BaseTextNN
 
 
 def dynamic_ktop(l, L, s, min_ktop):

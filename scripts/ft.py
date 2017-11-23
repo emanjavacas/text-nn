@@ -6,7 +6,7 @@ import random
 import fasttext as ft
 from sklearn.metrics import classification_report
 
-from loaders import load_twisty
+from text_nn.loaders import load_twisty
 
 random.seed(1001)
 

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.base import BaseTextNN
+from text_nn.models.base import BaseTextNN
 
 
 class RCNN(BaseTextNN):
