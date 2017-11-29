@@ -1,6 +1,7 @@
 
 import os
 import math
+from pprint import pprint
 
 from collections import Counter
 import argparse
@@ -41,15 +42,6 @@ def make_score_hook(model, dataset):
     return hook
 
 
-def make_criterion(train):
-    counts = Counter([y[0] for y in train.data['trg']])
-    total = sum(counts.values())
-    weight = torch.Tensor(len(counts)).zero_()
-    for label, count in counts.items():
-        weight[label] = total / count
-    return nn.NLLLoss(weight=weight)
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # model
@@ -70,6 +62,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', default=0.001, type=float)
     parser.add_argument('--max_norm', default=20., type=float)
     parser.add_argument('--batch_size', type=int, default=264)
+    parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--checkpoints', default=100, type=int)
     parser.add_argument('--hooks_per_epoch', default=10, type=int)
@@ -78,39 +71,47 @@ if __name__ == '__main__':
     # dataset
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
-    parser.add_argument('--min_len', default=0, type=int)
+    parser.add_argument('--min_len', default=5, type=int)
     parser.add_argument('--min_freq', default=5, type=int)
     parser.add_argument('--level', default='token')
     parser.add_argument('--concat', action='store_true')
     parser.add_argument('--cache_data', action='store_true')
+    parser.add_argument('--max_tweets', type=int, default=0)
     args = parser.parse_args()
-    print(vars(args))
 
     print("Loading data...")
-    prefix = '{level}.{min_len}.{min_freq}.{concat}'.format(**vars(args))
-    if not args.cache_data or not os.path.isfile('data/%s_train.pt' % prefix):
+    prefix = '{level}.{min_len}.{min_freq}.{concat}.{max_tweets}'.format(**vars(args))
+    if not args.cache_data or not os.path.isfile('data/{}_train.pt'.format(prefix)):
         src, trg = load_twisty(
             min_len=args.min_len, level=args.level, concat=args.concat,
-            processor=text_processor(lower=False))
+            processor=text_processor(lower=False),
+            max_tweets=None if args.max_tweets == 0 else args.max_tweets)
         train, test, valid = load_dataset(
             src, trg, args.batch_size, min_freq=args.min_freq,
             gpu=args.gpu, dev=args.dev, test=args.test)
         if args.cache_data:
-            train.to_disk('data/%s_train.pt' % prefix)
-            test.to_disk('data/%s_test.pt' % prefix)
-            valid.to_disk('data/%s_valid.pt' % prefix)
+            train.to_disk('data/{}_train.pt'.format(prefix))
+            test.to_disk('data/{}_test.pt'.format(prefix))
+            valid.to_disk('data/{}_valid.pt'.format(prefix))
     else:
-        train = PairedDataset.from_disk('data/%s_train.pt' % prefix)
-        valid = PairedDataset.from_disk('data/%s_valid.pt' % prefix)
+        train = PairedDataset.from_disk('data/{}_train.pt'.format(prefix))
+        valid = PairedDataset.from_disk('data/{}_valid.pt'.format(prefix))
     train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
     datasets = {'train': train, 'valid': valid}
 
+    print("Loading pretrained embeddings")
+    weight = None
+    if args.load_embeddings:
+        weight = load_embeddings(
+            train.d['src'].vocab, args.flavor, args.suffix, 'data')
+
+    print("Starting experiment")
     sampler = make_sampler({
         'emb_dim': ['uniform', int, 20, 50],
         'hid_dim': ['uniform', int, 20, 100],
         'dropout': ['loguniform', float, math.log(0.1), math.log(0.5)],
-        'model': ['choice', str, ('CNNText', 'DCNN', 'RCNN')],
-        'load_embeddings': ['choice', bool, (True, False)],
+        'model': ['choice', str, ('CNNText', 'DCNN', 'RCNN', 'RNNText', 'ConvRec')],
+        # 'load_embeddings': ['choice', bool, (True, False)],
         'max_dim': ['uniform', int, 50, 200],
         # not applying to DCNN
         'out_channels': ['uniform', int, 10, 150],
@@ -138,14 +139,14 @@ if __name__ == '__main__':
                 kernel_sizes = params['kernel_sizes']
                 out_channels = params['out_channels']
 
-            if params['load_embeddings']:
-                weight = load_embeddings(
-                    train.d['src'].vocab, args.flavor, args.suffix, 'data')
+            if params.get('load_embeddings', None):
+                if not args.load_embeddings:
+                    raise ValueError("Need load_embeddings")
                 emb_dim = args.emb_dim
             else:
                 emb_dim = params['emb_dim']
 
-            model = getattr(models, args.model)(
+            model = getattr(models, params['model'])(
                 n_classes, vocab, emb_dim=emb_dim, hid_dim=params['hid_dim'],
                 dropout=params['dropout'],
                 padding_idx=train.d['src'].get_pad(),
@@ -159,9 +160,7 @@ if __name__ == '__main__':
 
             u.initialize_model(model)
 
-            if params['load_embeddings']:
-                if not args.load_embeddings:
-                    raise ValueError("Need load_embeddings")
+            if params.get('load_embeddings', None):
                 model.init_embeddings(weight)
 
             optimizer = Optimizer(
@@ -176,6 +175,7 @@ if __name__ == '__main__':
                 self.early_stopping.add_checkpoint(sum(valid_loss.pack()))
 
             trainer = Trainer(model, datasets, optimizer)
+            trainer.add_loggers(StdLogger())
             trainer.add_hook(make_score_hook(model, valid),
                              hooks_per_epoch=args.hooks_per_epoch)
             trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
@@ -190,11 +190,13 @@ if __name__ == '__main__':
             (_, loss), _ = self.trainer.train_batches(
                 batches, args.checkpoints, shuffle=True)
 
-            self.trainer.model.model.cpu()
+            self.trainer.model.cpu()
 
             return {'loss': loss, 'early_stop': self.early_stopping.stopped}
 
     hb = Hyperband(
         sampler, create_runner, max_iter=args.max_iter, eta=args.eta)
 
-    print(hb.run())
+    result = hb.run()
+
+    pprint(result)

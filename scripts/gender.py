@@ -15,15 +15,15 @@ import seqmod.utils as u
 
 from text_nn.loaders import load_twisty, load_dataset, load_embeddings
 
-import models
+from text_nn import models
 
 
 def compute_scores(model, dataset):
     trues, preds = [], []
-    for sources, targets in dataset:
-        _, b_preds = model.predict(sources)
-        trues.extend(targets.view(-1).data.tolist())
-        preds.extend(b_preds.view(-1).data.tolist())
+    for src, trg in dataset:
+        _, pred = model.predict(src)
+        trues.extend(trg.view(-1).data.tolist())
+        preds.extend(pred.view(-1).data.tolist())
     return trues, preds
 
 
@@ -42,14 +42,13 @@ if __name__ == '__main__':
     parser.add_argument('--model', required=True)
     parser.add_argument('--emb_dim', default=50, type=int)
     parser.add_argument('--hid_dim', default=50, type=int)
-    parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--dropout', default=0.25, type=float)
     parser.add_argument('--load_embeddings', action='store_true')
     parser.add_argument('--flavor', default=None)
     parser.add_argument('--suffix', default=None)
     parser.add_argument('--max_dim', default=100, type=int)
     parser.add_argument('--out_channels', default=(12,), nargs='+', type=int)
-    parser.add_argument('--kernel_sizes', nargs='+', type=int,
-                        default=(5, 4, 3))
+    parser.add_argument('--kernel_sizes', nargs='+', type=int, default=(5, 4, 3))
     parser.add_argument('--act', default='relu')
     parser.add_argument('--ktop', default=4, type=int)
     # training
@@ -58,7 +57,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--epochs', default=10, type=int)
-    parser.add_argument('--batch_size', type=int, default=1024)
+    parser.add_argument('--batch_size', type=int, default=264)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--outputfile', default=None)
     parser.add_argument('--checkpoints', default=100, type=int)
@@ -66,44 +65,48 @@ if __name__ == '__main__':
     # dataset
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
-    parser.add_argument('--min_len', default=0, type=int)
+    parser.add_argument('--min_len', default=5, type=int)
     parser.add_argument('--min_freq', default=5, type=int)
     parser.add_argument('--level', default='token')
     parser.add_argument('--concat', action='store_true')
     parser.add_argument('--cache_data', action='store_true')
+    parser.add_argument('--max_tweets', type=int, default=0)
     args = parser.parse_args()
 
     print("Loading data...")
-    prefix = '{level}.{min_len}.{min_freq}.{concat}'.format(**vars(args))
-    if not args.cache_data or not os.path.isfile('data/%s_train.pt' % prefix):
+    prefix = '{level}.{min_len}.{min_freq}.{concat}.{max_tweets}'.format(**vars(args))
+    if not args.cache_data or not os.path.isfile('data/{}_train.pt'.format(prefix)):
         src, trg = load_twisty(
             min_len=args.min_len, level=args.level, concat=args.concat,
-            processor=text_processor(lower=False))
+            processor=text_processor(lower=False),
+            max_tweets=None if args.max_tweets == 0 else args.max_tweets)
         train, test, valid = load_dataset(
             src, trg, args.batch_size, min_freq=args.min_freq,
             gpu=args.gpu, dev=args.dev, test=args.test)
         if args.cache_data:
-            train.to_disk('data/%s_train.pt' % prefix)
-            test.to_disk('data/%s_test.pt' % prefix)
-            valid.to_disk('data/%s_valid.pt' % prefix)
+            train.to_disk('data/{}_train.pt'.format(prefix))
+            test.to_disk('data/{}_test.pt'.format(prefix))
+            valid.to_disk('data/{}_valid.pt'.format(prefix))
     else:
-        train = PairedDataset.from_disk('data/%s_train.pt' % prefix)
-        test = PairedDataset.from_disk('data/%s_test.pt' % prefix)
-        valid = PairedDataset.from_disk('data/%s_valid.pt' % prefix)
+        train = PairedDataset.from_disk('data/{}_train.pt'.format(prefix))
+        test = PairedDataset.from_disk('data/{}_test.pt'.format(prefix))
+        valid = PairedDataset.from_disk('data/{}_valid.pt'.format(prefix))
         train.set_gpu(args.gpu)
         test.set_gpu(args.gpu)
         valid.set_gpu(args.gpu)
 
-    print('* number of train batches. %d' % len(train))
+    print('* number of train batches. {}'.format(len(train)))
     datasets = {'train': train, 'valid': valid, 'test': test}
 
-    class_weight = Counter([y[0] for y in train.data['trg']])
+    class_weight = Counter(train.data['trg'])
     class_weight = [v for k, v in sorted(class_weight.items())]
 
     print("Building model...")
-    out_channels = args.out_channels
+    kernel_sizes, out_channels = args.kernel_sizes, args.out_channels
     if args.model != 'DCNN':
-        out_channels = args.out_channels[0]
+        out_channels = out_channels[0]
+    else:
+        kernel_sizes, out_channels = (7, 5), (6, 14)
 
     model = getattr(models, args.model)(
         len(train.d['trg'].vocab), len(train.d['src'].vocab),
@@ -111,8 +114,7 @@ if __name__ == '__main__':
         emb_dim=args.emb_dim, hid_dim=args.hid_dim,
         dropout=args.dropout, padding_idx=train.d['src'].get_pad(),
         # cnn
-        act=args.act,
-        out_channels=out_channels, kernel_sizes=args.kernel_sizes,
+        act=args.act, out_channels=out_channels, kernel_sizes=kernel_sizes,
         # - rcnn only
         max_dim=args.max_dim,
         # - DCNN only
@@ -121,7 +123,8 @@ if __name__ == '__main__':
     u.initialize_model(model)
 
     print(model)
-    print('* number of parameters. %d' % len(list(model.parameters())))
+    print('* number of parameters. {}'.format(
+        sum(w.nelement() for w in model.parameters())))
 
     if args.load_embeddings:
         emb_weight = load_embeddings(
@@ -137,19 +140,8 @@ if __name__ == '__main__':
 
     trainer = Trainer(model, datasets, optimizer)
     trainer.add_loggers(StdLogger(args.outputfile))
-    trainer.add_hook(make_score_hook(model, valid), hooks_per_epoch=10)
-    trainer.train(args.epochs, args.checkpoints, shuffle=True, gpu=args.gpu)
+    trainer.add_hook(make_score_hook(model, valid), hooks_per_epoch=1)
+    trainer.train(args.epochs, args.checkpoints, shuffle=True)
 
     test_true, test_pred = compute_scores(model, test)
     trainer.log("info", metrics.classification_report(test_true, test_pred))
-
-    from casket import Experiment
-    db = Experiment.use('db.json', exp_id=args.exp_id).model(args.model)
-    p, r, f, s = metrics.precision_recall_fscore_support(test_true, test_pred)
-    db.add_result({'precision': p.tolist(), 'recall': r.tolist(),
-                   'fscore': f.tolist(), 'support': s.tolist(),
-                   'class_precision': np.average(p, weights=s),
-                   'class_recall': np.average(r, weights=s),
-                   'class_fscore': np.average(f, weights=s),
-                   'n_params': len(list(model.parameters()))},
-                  params=vars(args))
