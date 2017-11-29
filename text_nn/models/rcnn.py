@@ -33,6 +33,7 @@ class RCNN(BaseTextNN):
         self.dropout = dropout
         self.act = getattr(F, act)
         super(RCNN, self).__init__()
+
         self.embeddings = nn.Embedding(
             self.vocab, self.emb_dim, padding_idx=padding_idx)
         self.c_l = nn.Parameter(torch.randn(self.hid_dim))

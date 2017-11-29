@@ -1,43 +1,12 @@
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 from text_nn.models.base import BaseTextNN
-
-
-class ConvLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_sizes, act='relu'):
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_sizes = kernel_sizes
-        self.act = act
-        super(ConvLayer, self).__init__()
-
-        self.convs = []
-        for d, (H, W) in enumerate(self.kernel_sizes):
-            conv = nn.Conv2d(self.in_channels, self.out_channels, (H, W))
-            self.add_module('ConvLayer_%d' % d, conv)
-            self.convs.append(conv)
-
-    def forward(self, inp):
-        conv_out = []
-        for conv in self.convs:
-            # (batch x out_channels x 1 x W_out)
-            out = conv(inp)
-            # (batch x out_channels x W_out)
-            out = out.squeeze(2)
-            # (batch x out_channels x 1)
-            out = F.max_pool1d(out, out.size(2))
-            # (batch x out_channels)
-            out = out.squeeze(2)
-            out = getattr(F, self.act)(out)
-            conv_out.append(out)
-        # (num_kernels x batch x out_channels)
-        conv_out = torch.stack(conv_out)
-        # (batch x num_kernels x out_channels)
-        conv_out = conv_out.t()
-        return conv_out
 
 
 class CNNText(BaseTextNN):
@@ -67,15 +36,16 @@ class CNNText(BaseTextNN):
                  vocab, emb_dim=100, padding_idx=None,
                  # cnn parameters
                  out_channels=100, kernel_sizes=(5, 4, 3), act='relu',
+                 conv_type='wide',
                  # rest parameters
                  dropout=0.0, **kwargs):
         self.vocab = vocab
         self.emb_dim = emb_dim
-
         self.out_channels = out_channels
         self.kernel_sizes = kernel_sizes
-
+        self.act = act
         self.dropout = dropout
+        self.conv_type = conv_type
 
         super(CNNText, self).__init__()
 
@@ -84,29 +54,61 @@ class CNNText(BaseTextNN):
             self.vocab, self.emb_dim, padding_idx=padding_idx)
 
         # CNN
-        self.conv = ConvLayer(
-            in_channels=1,      # text has only one channel
-            out_channels=self.out_channels,
-            kernel_sizes=[(self.emb_dim, W) for W in self.kernel_sizes],
-            act=act)
+        padding, conv = 0, []
+        W, C_i, C_o = emb_dim, 1, out_channels
+        for H in kernel_sizes:
+            if self.conv_type == 'wide':
+                padding = math.floor(H / 2) * 2
+            conv.append(nn.Conv2d(C_i, C_o, (H, W), padding=(padding, 0)))
+        self.conv = nn.ModuleList(conv)
 
         # Projection
-        proj_in = len(self.kernel_sizes) * self.out_channels
+        proj_in = len(kernel_sizes) * out_channels
         self.proj = nn.Sequential(
             nn.Linear(proj_in, n_classes),
             nn.LogSoftmax())
 
+    def _maybe_add_padding(self, inp):
+        if self.conv_type == 'wide':
+            return inp
+
+        seq_len, batch = inp.size()
+
+        # input sequence needs padding
+        if seq_len - max(self.kernel_sizes) < 0:
+            # check if embeddings have entry for padding
+            padding_idx = self.embeddings.padding_idx
+            if padding_idx is None:
+                raise ValueError("Needs padding for too small input")
+            # concat padding to the input (left-side)
+            pad_size = max(self.kernel_sizes) - seq_len, batch
+            pad = Variable(inp.data.new(*pad_size).zero_()) + padding_idx
+            inp = torch.cat([pad, inp], dim=0)
+
+        return inp
+
     def forward(self, inp):
+        inp = self._maybe_add_padding(inp)
+
         # Embedding
-        emb = self.embeddings(inp).t()  # (batch x seq_len x emb_dim)
-        emb = emb.transpose(1, 2)       # (batch x emb_dim x seq_len)
+        emb = self.embeddings(inp)
+        emb = emb.transpose(0, 1)  # (batch x seq_len x emb_dim)
+        emb = emb.unsqueeze(1)     # (batch x 1 x seq_len x emb_dim)
 
         # CNN
-        conv_out = self.conv(emb.unsqueeze(1))
-        conv_out = F.dropout(
-            conv_out, p=self.dropout, training=self.training)
+        conv_outs = []
+        for conv in self.conv:
+            conv_out = conv(emb)
+            # (batch x Ci x seq_len x 1)
+            conv_out = getattr(F, self.act)(conv_out).squeeze(3)
+            # (batch x Ci)
+            conv_out = F.max_pool1d(conv_out, conv_out.size(2)).squeeze(2)
+            conv_outs.append(conv_out)
 
-        batch = conv_out.size(0)
-        # (batch x num_kernels x out_channels)
-        conv_out = conv_out.view(batch, -1)
-        return self.proj(conv_out)
+        conv_outs = torch.cat(conv_outs, dim=1)
+
+        conv_outs = F.dropout(
+            conv_outs, p=self.dropout, training=self.training)
+
+        # (batch x num_kernels * out_channels)
+        return self.proj(conv_outs)

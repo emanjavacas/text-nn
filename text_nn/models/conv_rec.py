@@ -74,14 +74,19 @@ class ConvRec(BaseTextNN):
 
         # CNN
         self.conv_layers = []
-        for d, W in enumerate(self.kernel_sizes):
-            pad = math.floor(W / 2) if self.conv_type == 'wide' else 0
-            in_channels = 1 if d == 0 else self.out_channels
-            H = self.emb_dim if d == 0 else 1
-            conv = nn.Conv2d(in_channels, self.out_channels, (H, W))
-            self.add_module('Conv_%d' % d, conv)
+        for layer, W in enumerate(self.kernel_sizes):
+            in_channels, H = None, None
+            if layer == 0:
+                in_channels, H = 1, self.emb_dim
+            else:
+                in_channels, H = self.out_channels, 1
+            padding = math.floor(W / 2) * 2 if self.conv_type == 'wide' else 0
+
+            conv = nn.Conv2d(in_channels, self.out_channels, (H, W),
+                             padding=(0, padding))
+            self.add_module('Conv_{}'.format(layer), conv)
             self.conv_layers.append(conv)
-        
+
         # RNN
         self.rnn = getattr(nn, self.cell)(
             self.out_channels, self.hid_dim, self.rnn_layers,
@@ -92,11 +97,12 @@ class ConvRec(BaseTextNN):
             nn.Linear(2 * self.hid_dim, n_classes),
             nn.LogSoftmax())
 
-    def forward(self, inp):
+    def forward(self, inp):        
         # Embedding
-        emb = self.embeddings(inp).t()  # (batch x seq_len x emb_dim)
-        emb = emb.transpose(1, 2)       # (batch x emb_dim x seq_len)
-        emb = emb.unsqueeze(1)          # (batch x 1 x emb_dim x seq_len)
+        emb = self.embeddings(inp)
+        emb = emb.transpose(0, 1)  # (batch x seq_len x emb_dim)
+        emb = emb.transpose(1, 2)  # (batch x emb_dim x seq_len)
+        emb = emb.unsqueeze(1)     # (batch x 1 x emb_dim x seq_len)
 
         # CNN
         conv_in = emb
@@ -112,7 +118,9 @@ class ConvRec(BaseTextNN):
 
         # RNN
         # (floor(seq_len / pool_size) x batch x out_channels)
-        rnn_in = conv_out.squeeze(2).t().transpose(0, 2).contiguous()
+        rnn_in = conv_out.squeeze(2) \
+                         .transpose(0, 1) \
+                         .transpose(0, 2).contiguous()
         # (floor(seq_len / pool_size) x batch x hid_dim * 2)
         rnn_out, _ = self.rnn(rnn_in)
 

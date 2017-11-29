@@ -12,6 +12,8 @@ class BaseTextNN(nn.Module):
         if weight is not None:
             self.weight = torch.Tensor(weight)
 
+        super(BaseTextNN, self).__init__()
+
     def init_embeddings(self, weight):
         if isinstance(weight, np.ndarray):
             self.embeddings.weight.data = torch.Tensor(weight)
@@ -27,13 +29,19 @@ class BaseTextNN(nn.Module):
         scores, preds = log_probs.max(1)
         return scores, preds
 
-    def loss(self, batch, test=True):
+    def loss(self, batch, test=False, **kwargs):
         src, trg = batch
 
         output = self(src)
         loss = F.nll_loss(output, trg, weight=self.weight, size_average=True)
 
-        if test:
+        if not test:
             loss.backward()
 
-        return (loss.data[0], ), len(trg)
+        padding_idx, nelement = None, src.nelement()
+        if hasattr(self, 'embeddings'):
+            padding_idx = self.embeddings.padding_idx
+        if padding_idx is not None:
+            nelement = src.data.ne(padding_idx).int().sum()
+
+        return (loss.data[0], ), nelement
