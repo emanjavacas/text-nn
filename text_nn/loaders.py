@@ -9,22 +9,16 @@ from seqmod.misc.dataset import Dict, PairedDataset
 from text_nn.w2v import Embedder
 
 
-def identity(x):
-    return x
-
-
 # Data loaders
 def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
                 min_len=0,
-                level='token',
                 concat=False,
-                processor=identity,
+                processor=lambda tweet: tweet,
                 max_tweets=None):
     """
     Load twisty dataset with gender labels per tweet
     """
     src, trg, total_tweets = [], [], 0
-
     tweets_path = os.path.join(path, 'data/tweets/en/users_id/')
     tweet_fs = set(os.listdir(tweets_path))
 
@@ -32,14 +26,12 @@ def load_twisty(path='/home/corpora/TwiSty/twisty-EN',
         metadata = json.load(fp)
 
     for user_id, user_metadata in metadata.items():
-
         if user_id + ".json" in tweet_fs:
             with open(os.path.join(tweets_path, user_id + '.json'), 'r') as fp:
                 tweets = json.load(fp)['tweets']
 
             buf = []
             for tweet_id in user_metadata['confirmed_tweet_ids']:
-
                 if max_tweets is not None and total_tweets >= max_tweets:
                     break
 

@@ -1,6 +1,7 @@
 
 import math
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -19,9 +20,10 @@ class ConvRec(BaseTextNN):
     the number of feature maps (out_channels) after the last layer - which
     is, anyway, held constant across conv layers.
 
-    Running the current model with the paper settings (e.g. out_channels -
-    number of filters `d` in the paper -, set to 128) results in almost
-    no learning.
+    It also deviates from the original description in that we use the
+    concatenation of the last step and the average n-1 first steps of
+    the RNN as input to the softmax projection layer. This has the goal
+    of improving gradient flow through the RNN layer.
 
     Parameters:
     -----------
@@ -52,14 +54,13 @@ class ConvRec(BaseTextNN):
                  dropout=0.0, **kwargs):
         self.vocab = vocab
         self.emb_dim = emb_dim
-
         self.out_channels = out_channels  # num_filters
         self.kernel_sizes = kernel_sizes  # filter_sizes
         self.pool_size = pool_size
         self.conv_type = conv_type
         self.act = act
 
-        self.hid_dim = hid_dim
+        self.hid_dim = hid_dim // 2 if bidi else hid_dim
         self.cell = cell
         self.bidi = bidi
         self.rnn_layers = rnn_layers
@@ -75,15 +76,15 @@ class ConvRec(BaseTextNN):
         # CNN
         self.conv_layers = []
         for layer, W in enumerate(self.kernel_sizes):
-            in_channels, H = None, None
+            C_i, H = None, None
             if layer == 0:
-                in_channels, H = 1, self.emb_dim
+                C_i, H = 1, self.emb_dim
             else:
-                in_channels, H = self.out_channels, 1
+                C_i, H = self.out_channels, 1
             padding = math.floor(W / 2) * 2 if self.conv_type == 'wide' else 0
 
-            conv = nn.Conv2d(in_channels, self.out_channels, (H, W),
-                             padding=(0, padding))
+            conv = nn.Conv2d(
+                C_i, self.out_channels, (H, W), padding=(0, padding))
             self.add_module('Conv_{}'.format(layer), conv)
             self.conv_layers.append(conv)
 
@@ -94,7 +95,7 @@ class ConvRec(BaseTextNN):
 
         # Proj
         self.proj = nn.Sequential(
-            nn.Linear(2 * self.hid_dim, n_classes),
+            nn.Linear(2 * self.hid_dim * (1 + int(bidi)), n_classes),
             nn.LogSoftmax())
 
     def forward(self, inp):        
@@ -123,8 +124,10 @@ class ConvRec(BaseTextNN):
                          .transpose(0, 2).contiguous()
         # (floor(seq_len / pool_size) x batch x hid_dim * 2)
         rnn_out, _ = self.rnn(rnn_in)
+        # - average n-1 steps for better gradient flow (batch x hid_dim * 2)
+        rnn_out = torch.cat([rnn_out[:-1].sum(0), rnn_out[-1]], dim=1)
 
         # Proj
-        # (batch x hid_dim * 2)
-        rnn_out = rnn_out[-1, :, :]  # take last step of last rnn layer
-        return self.proj(rnn_out)
+        out = self.proj(rnn_out)
+
+        return out

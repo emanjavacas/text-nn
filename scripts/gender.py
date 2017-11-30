@@ -4,13 +4,15 @@ from collections import Counter
 import argparse
 
 import numpy as np
-from sklearn import metrics
+from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import classification_report
 
 from seqmod.misc.preprocess import text_processor
 from seqmod.misc.optimizer import Optimizer
 from seqmod.misc.trainer import Trainer
 from seqmod.misc.loggers import StdLogger
 from seqmod.misc.dataset import PairedDataset
+from seqmod.misc.early_stopping import EarlyStopping
 import seqmod.utils as u
 
 from text_nn.loaders import load_twisty, load_dataset, load_embeddings
@@ -31,7 +33,7 @@ def make_score_hook(model, dataset):
 
     def hook(trainer, epoch, batch, checkpoint):
         trues, preds = compute_scores(model, dataset)
-        trainer.log("info", metrics.classification_report(trues, preds))
+        trainer.log("info", classification_report(trues, preds))
 
     return hook
 
@@ -57,11 +59,12 @@ if __name__ == '__main__':
     parser.add_argument('--max_norm', default=5., type=float)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--early_stopping', type=int, default=0)
     parser.add_argument('--batch_size', type=int, default=264)
     parser.add_argument('--gpu', action='store_true')
     parser.add_argument('--outputfile', default=None)
     parser.add_argument('--checkpoints', default=100, type=int)
-    parser.add_argument('--exp_id', default='test')
+    parser.add_argument('--exp_id', default='')
     # dataset
     parser.add_argument('--dev', default=0.1, type=float)
     parser.add_argument('--test', default=0.2, type=float)
@@ -77,8 +80,8 @@ if __name__ == '__main__':
     prefix = '{level}.{min_len}.{min_freq}.{concat}.{max_tweets}'.format(**vars(args))
     if not args.cache_data or not os.path.isfile('data/{}_train.pt'.format(prefix)):
         src, trg = load_twisty(
-            min_len=args.min_len, level=args.level, concat=args.concat,
-            processor=text_processor(lower=False),
+            min_len=args.min_len, concat=args.concat,
+            processor=text_processor(num=False, level=args.level),
             max_tweets=None if args.max_tweets == 0 else args.max_tweets)
         train, test, valid = load_dataset(
             src, trg, args.batch_size, min_freq=args.min_freq,
@@ -105,8 +108,8 @@ if __name__ == '__main__':
     kernel_sizes, out_channels = args.kernel_sizes, args.out_channels
     if args.model != 'DCNN':
         out_channels = out_channels[0]
-    else:
-        kernel_sizes, out_channels = (7, 5), (6, 14)
+    # else:
+    #     kernel_sizes, out_channels = (7, 5), (6, 14)
 
     model = getattr(models, args.model)(
         len(train.d['trg'].vocab), len(train.d['src'].vocab),
@@ -123,8 +126,8 @@ if __name__ == '__main__':
     u.initialize_model(model)
 
     print(model)
-    print('* number of parameters. {}'.format(
-        sum(w.nelement() for w in model.parameters())))
+    n_params = sum(w.nelement() for w in model.parameters())
+    print('* number of parameters. {}'.format(n_params))
 
     if args.load_embeddings:
         emb_weight = load_embeddings(
@@ -138,10 +141,27 @@ if __name__ == '__main__':
         model.parameters(), args.optim, lr=args.learning_rate,
         max_norm=args.max_norm, weight_decay=args.weight_decay)
 
-    trainer = Trainer(model, datasets, optimizer)
+    early_stopping = None
+    if args.early_stopping > 0:
+        early_stopping = EarlyStopping(10, patience=args.early_stopping)
+
+    trainer = Trainer(model, datasets, optimizer, early_stopping=early_stopping)
     trainer.add_loggers(StdLogger(args.outputfile))
     trainer.add_hook(make_score_hook(model, valid), hooks_per_epoch=1)
     trainer.train(args.epochs, args.checkpoints, shuffle=True)
 
     test_true, test_pred = compute_scores(model, test)
-    trainer.log("info", metrics.classification_report(test_true, test_pred))
+    trainer.log("info", classification_report(test_true, test_pred))
+
+    if args.exp_id:
+        from casket import Experiment
+        db = Experiment.use('db.json', exp_id=args.exp_id).model(args.model)
+        p, r, f, s = precision_recall_fscore_support(test_true, test_pred)
+        db.add_result({'precision': p.tolist(), 'recall': r.tolist(),
+                       'fscore': f.tolist(), 'support': s.tolist(),
+                       'class_precision': np.average(p, weights=s),
+                       'class_recall': np.average(r, weights=s),
+                       'class_fscore': np.average(f, weights=s),
+                       'n_params': n_params},
+                      params=vars(args))
+

@@ -103,14 +103,14 @@ class DCNN(BaseTextNN):
         # variable to get H after all CNN layers
         H, self.conv_layers = self.emb_dim, []
 
-        for l, (C_o, K) in enumerate(zip(self.out_channels, self.kernel_sizes)):
+        for l, (C_o, W) in enumerate(zip(self.out_channels, self.kernel_sizes)):
             # text only has one channel
             C_i = 1 if l == 0 else self.out_channels[l-1]
             # feature map H gets folded each layer
             H = math.ceil(H / self.folding_factor)
             # 1D convolutions with multiple filters
             conv = nn.Conv2d(
-                C_i, C_o, (1, K), padding=(0, get_padding(K, self.conv_type)))
+                C_i, C_o, (1, W), padding=(0, get_padding(W, self.conv_type)))
             # add layer
             self.add_module('Conv1d_{}'.format(l), conv)
             self.conv_layers.append(conv)

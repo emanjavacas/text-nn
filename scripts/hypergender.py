@@ -99,15 +99,15 @@ if __name__ == '__main__':
     train.set_gpu(args.gpu), valid.set_gpu(args.gpu)
     datasets = {'train': train, 'valid': valid}
 
-    print("Loading pretrained embeddings")
     weight = None
     if args.load_embeddings:
+        print("Loading pretrained embeddings")
         weight = load_embeddings(
             train.d['src'].vocab, args.flavor, args.suffix, 'data')
 
     print("Starting experiment")
     sampler = make_sampler({
-        'emb_dim': ['uniform', int, 20, 50],
+        'emb_dim': ['uniform', int, 20, 100],
         'hid_dim': ['uniform', int, 20, 100],
         'dropout': ['loguniform', float, math.log(0.1), math.log(0.5)],
         'model': ['choice', str, ('CNNText', 'DCNN', 'RCNN', 'RNNText', 'ConvRec')],
@@ -119,7 +119,7 @@ if __name__ == '__main__':
             (5, 4, 3), (7, 5, 4, 3), (9, 7, 5, 4, 3),
             (7, 5, 3), (9, 5, 3, 2), (12, 9, 6, 3)]],
         # only applying to DCNN: increase kernel_sizes, out_channels by factor
-        'dcnn_factor': ['uniform', int, 1, 5], 'ktop': ['uniform', int, 3, 8],
+        'dcnn_factor': ['uniform', int, 1, 3], 'ktop': ['uniform', int, 3, 8],
         # 'lr': ['loguniform', float, math.log(0.001), math.log(0.05)]
     })
 
@@ -175,20 +175,22 @@ if __name__ == '__main__':
                 self.early_stopping.add_checkpoint(sum(valid_loss.pack()))
 
             trainer = Trainer(model, datasets, optimizer)
-            trainer.add_loggers(StdLogger())
-            trainer.add_hook(make_score_hook(model, valid),
-                             hooks_per_epoch=args.hooks_per_epoch)
+            # trainer.add_loggers(StdLogger())
+            # trainer.add_hook(make_score_hook(model, valid),
+            #                  hooks_per_epoch=args.hooks_per_epoch)
             trainer.add_hook(early_stop_hook, hooks_per_epoch=5)
+
             self.trainer = trainer
 
         def __call__(self, n_iters):
             batches = int(len(train) / args.max_iter) * 5
+            print("Training {}".format(batches * n_iters))
 
             if args.gpu:
                 self.trainer.model.cuda()
 
             (_, loss), _ = self.trainer.train_batches(
-                batches, args.checkpoints, shuffle=True)
+                batches * n_iters, args.checkpoints, shuffle=True)
 
             self.trainer.model.cpu()
 
